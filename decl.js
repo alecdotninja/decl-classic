@@ -81,7 +81,7 @@
 			writable: false,
 			value: function startWatching() {
 				if(mutationObserver) throw new Error('Decl is already watching.');
-				mutationObserver = new MutationObserver(handleMutations)
+				mutationObserver = new MutationObserver(handleMutations);
 
 				mutationObserver.observe(rootNode, {
 					attributes: true,
@@ -380,8 +380,8 @@
 			get: function getIsRuleActive() {
 				return Decl.isWatching && rules.indexOf(this) >= 0;
 			},
-			set: function setIsRuleActive(newIsRuleActive) {
-				throw new Error('rule.isRuleActive cannot be modified directly');
+			set: function setIsRuleActive() {
+				throw new Error('Use Decl.addRule or Decl.removeRule instead');
 			}
 		}
 	});
