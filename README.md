@@ -1,6 +1,5 @@
 # decl.js
-
-Decl is a simple library that uses mutation events to enable more declarative and unobrusive JavaScript.
+Decl is a simple library designed to enable more declarative and unobtrusive JavaScript.
 
 ## Usage
 
