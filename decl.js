@@ -246,8 +246,6 @@
 		
 		return rule;
 	};
-
-	Decl.Rule = Rule;
-
+	
 	return Decl;
 }));
