@@ -11,380 +11,243 @@
 }(typeof window !== "undefined" ? window : this, function createDecl(global) {
 	'use strict';
 
-	var append = Function.prototype.apply.bind(Array.prototype.push);
-
-	var Element = global.Element;
-	if(typeof(Element) !== 'function') throw new Error('createDecl: global must define Element');
-
-	var documentElement = global.document && global.document.documentElement;
-	if(!(documentElement instanceof Element)) throw new Error('createDecl: global must have an initialized document');
-
+	var rootElement = global.document.documentElement;
 	var MutationObserver = global.MutationObserver;
-	if(typeof(MutationObserver) !== 'function') throw new Error('createDecl: global must define MutationObserver');
-	
-	var rules = [];
-	var mutationObserver = null;
-	var rootNode = global.document.documentElement;
 
-	function handleMutations(mutations) {
-		mutations.forEach(function(mutation) {
-			var addedNodes = null;
+	var Rule = function Rule() {
+		if(!(this instanceof Rule)) return new Rule();
+	};
 
-			if(mutation.addedNodes) {
-				addedNodes = Array.apply(null, mutation.addedNodes);
+	var _indexOf = Array.prototype.indexOf;
+
+	Rule.prototype.sweep = function() {	
+		var matchingElements = rootElement.querySelectorAll(this.selector);
+		var matches = (this.matches = this.matches || []);
+		var index, length, element;
+
+		for(index = 0, length = matchingElements.length; index < length; index++) {
+			element = matchingElements[index];
+
+			if(matches.indexOf(element) === -1) {
+				matches.push(element);
+
+				try {
+					if(this.onMatch) (element);
+				}catch(exception){
+					setTimeout(function() {
+						throw exception;
+					}, 0);
+				}
 			}
+		}
 
-			var removedNodes = null;
+		for(index = 0, length = matches.length; index < length; index++) {
+			element = matches[index];
 
-			if(mutation.removedNodes) {
-				removedNodes = Array.apply(null, mutation.removedNodes);
+			if(_indexOf.call(matchingElements, element) === -1) {
+				matches.splice(index--, 1);
+				length = matches.length;
+
+				try {
+					if(this.onUnmatch) this.onUnmatch(element);
+				}catch(exception){
+					setTimeout(function() {
+						throw exception;
+					}, 0);
+				}
 			}
+		}
 
-			var changedNodes = null;
+		return this;
+	};
 
-			if(mutation.target && mutation.target instanceof Element) {
-				changedNodes = [mutation.target];
+	Rule.prototype.initialize = Rule.prototype.sweep;
+
+	Rule.prototype.cleanup = function() {
+		var matches = (this.matches = this.matches || []);
+		var index, length, element;
+
+		for(index = 0, length = matches.length; index < length; index++) {
+			element = matches[index];
+			
+			matches.splice(index--, 1);
+
+			try {
+				if(this.onUnmatch) this.onUnmatch(element);
+			}catch(exception){
+				setTimeout(function() {
+					throw exception;
+				}, 0);
 			}
+		}
 
-			rules.forEach(function(rule) {
-				if(addedNodes) {
-					rule.handleNodesAdded(addedNodes);
+		return this;
+	};
+
+	var activeRules = [];
+	var stack = [];
+
+	var processActiveRules = function() {
+		for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+			rule = activeRules[index];
+
+			if(stack.indexOf(rule) === -1) {
+				stack.push(rule);
+
+				try {
+					rule.sweep();
+				}catch(exception){
+					setTimeout(function() {
+						throw exception;
+					}, 0);
 				}
 
-				if(changedNodes) {
-					rule.handleNodesChanged(changedNodes);
-				}
+				stack.pop();
+			}
+		}
+	};
 
-				if(removedNodes) {
-					rule.handleNodesRemoved(removedNodes);
+	var animationFrameState = 0;
+	// 0 - outside
+	// 1 - waiting
+	// 2 - inside
+
+	var handleMutation = function() {
+		if(animationFrameState === 0) {
+			requestAnimationFrame(function() {
+				animationFrameState = 2;
+
+				try {
+					handleMutation();
+				}finally{
+					animationFrameState = 0;
 				}
 			});
-		});
-	}
 
-	function Decl(selector, options) {
+			animationFrameState = 1;
+		}else if(animationFrameState === 1) {
+			// nothing
+		}else if(animationFrameState === 2){
+			processActiveRules();
+		}else{
+			animationFrameState = 0;
+		}
+	};
+
+
+	var mutationObserver = null;
+
+	var Decl = function Decl(selector, options) {
 		var rule = Decl.createRule(selector, options);
-
-		Decl.addRule(rule);
 
 		if(!mutationObserver) {
 			Decl.startWatching();
 		}
 
+		Decl.addRule(rule);
+
 		return rule;
-	}
+	};
 
-	Object.defineProperties(Decl, {
-		startWatching: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function startWatching() {
-				if(mutationObserver) throw new Error('Decl is already watching.');
-				mutationObserver = new MutationObserver(handleMutations);
+	Decl.isWatching = false;
+	
+	Decl.startWatching = function() {
+		if(!mutationObserver) {
+			for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+				rule = activeRules[index];
 
-				mutationObserver.observe(rootNode, {
-					attributes: true,
-					characterData: true,
-					childList: true,
-					subtree: true
-				});
-
-				var addedNodes = [rootNode];
-
-				rules.forEach(function(rule) {
-					rule.handleNodesAdded(addedNodes);
-				});
-			}
-		},
-		stopWatching: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function stopWatching() {
-				if(!mutationObserver) throw new Error('Decl is not watching.');
-
-				var removedNodes = [rootNode];
-
-				rules.forEach(function(rule) {
-					rule.handleNodesRemoved(removedNodes);
-				});
-
-				mutationObserver.disconnect();
-				mutationObserver = null;
-			}
-		},
-		isWatching: {
-			configurable: false,
-			enumerable: true,
-			get: function getIsWatching() {
-				return !!mutationObserver;
-			},
-			set: function setIsWatching(newIsWatching) {
-				var isWatching = !!mutationObserver;
-
-				if(typeof(newIsWatching) !== 'boolean') {
-					throw new TypeError('Decl.isWatching must be a boolean');
-				}
-
-				if(newIsWatching && !isWatching) {
-					Decl.startWatching();
-				}else if(!newIsWatching && isWatching){
-					Decl.stopWatching();
-				}
-
-				return isWatching;
-			}
-		},
-
-		rootNode: {
-			configurable: false,
-			enumerable: true,
-			get: function getRootNode() {
-				return rootNode;
-			},
-			set: function setRootNode(newRootNode) {
-				if(mutationObserver) {
-					throw new Error('Decl.rootNode cannot be changed while watching');
-				}
-
-				if(!(rootNode instanceof Element)) {
-					throw new TypeError('Decl.rootNode must be an Element');
-				}
-
-				return rootNode = newRootNode;
-			}
-		},
-
-		Rule: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function Rule() {
-				throw new Error('Use Decl.createRule instead');
-			}
-		},
-
-		createRule: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function createRule(selector, options) {
-				if(typeof(selector) !== 'string') {
-					throw new TypeError('Decl.createRule: selector must be a string');
-				}
-
-				if(options.matches && typeof(options.matches) !== 'function') {
-					throw new TypeError('Decl.createRule: matches must be a function');
-				}
-
-				if(options.unmatches && typeof(options.unmatches) !== 'function') {
-					throw new TypeError('Decl.createRule: unmatches must be a function');
-				}
-
-				var rule = new Rule();
-
-				Object.defineProperties(rule, {
-					selector: {
-						configurable: false,
-						enumerable: true,
-						writable: false,
-						value: selector
-					},
-					matches: {
-						configurable: false,
-						enumerable: true,
-						writable: false,
-						value: options.matches
-					},
-					unmatches: {
-						configurable: false,
-						enumerable: true,
-						writable: false,
-						value: options.unmatches
-					}
-				});
-
-				return rule;
-			}
-		},
-
-		addRule: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function addRule(rule) {
-				if(rule instanceof Rule) {
-					rules.push(rule);
-				}else{
-					throw new TypeError('Decl.addRule: rule must be a Decl.Rule');
+				try{
+					rule.initialize();
+				}catch(exception){
+					setTimeout(function() {
+						throw exception;
+					}, 0);
 				}
 			}
-		},
-		removeRule: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function removeRule(rule) {
-				if(rule instanceof Rule) {
-					var index = rules.indexOf(rule);
 
-					if(index >= 0) {
-						rules.splice(index, 1);
-					}else{
-						throw new Error('Decl.removeRule: rule not found');
-					}
-				}else{
-					throw new TypeError('Decl.removeRule: rule must be a Decl.Rule');
-				}
-			}
-		},
+			mutationObserver = new MutationObserver(handleMutation);
 
-		prototype: {
-			configurable: false,
-			enumerable: false,
-			writable: false,
-			value: null
+			mutationObserver.observe(rootElement, {
+				attributes: true,
+				characterData: true,
+				childList: true,
+				subtree: true
+			});
+
+			Decl.isWatching = true;
 		}
-	});
 
-	function Rule() {
-		if(!(this instanceof Rule)) return new Rule();
+		return this;
+	};
 
-		var matchingNodes = [];
+	Decl.stopWatching = function() {
+		if(mutationObserver) {
+			mutationObserver.disconnect();
+			mutationObserver = null;
 
-		Object.defineProperty(this, 'matchingNodes', {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: matchingNodes
-		});
-	}
+			for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+				rule = activeRules[index];
 
-	Object.defineProperty(Decl.Rule, 'prototype', {
-		configurable: false,
-		enumerable: false,
-		writable: false,
-		value: Rule.prototype
-	});
-
-	Object.defineProperties(Rule.prototype, {
-		constructor: {
-			configurable: false,
-			enumerable: false,
-			writable: false,
-			value: Decl.Rule
-		},
-
-		matchingNodes: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: null
-		},
-		selector: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: null
-		},
-
-		handleNodesAdded: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function handleNodesAdded(addedNodes) {
-				var matchingNodes = this.matchingNodes;
-
-				this.collectRelevantNodes(addedNodes).forEach(function(node) {
-					var index = matchingNodes.indexOf(node);
-
-					if(index === -1) {
-						matchingNodes.push(node);
-						if(typeof(this.matches) === 'function') this.matches(node);				
-					}
-				}.bind(this));
-			}
-		},
-		handleNodesRemoved: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function handleNodesRemoved(removedNodes) {
-				var matchingNodes = this.matchingNodes;
-
-				this.collectRelevantNodes(removedNodes).forEach(function(node) {
-					var index = matchingNodes.indexOf(node);
-
-					if(index >= 0) {
-						matchingNodes.splice(index, 1);
-						if(typeof(this.unmatches) === 'function') this.unmatches(node);
-					}
-				}.bind(this));
-			}
-		},
-		handleNodesChanged: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function handleNodesChanged(changedNodes) {
-				var matchingNodes = this.matchingNodes;
-
-				this.collectRelevantNodes(changedNodes).forEach(function(node) {
-					var index = matchingNodes.indexOf(node);
-
-					if(index === -1) {
-						matchingNodes.push(node);
-						if(typeof(this.matches) === 'function') this.matches(node);				
-					}
-				});
-
-				var stillMatchingNodes = this.collectRelevantNodes(matchingNodes);
-
-				for(var index = 0, length = matchingNodes.length, node = null; index < length; index++) {
-					node = matchingNodes[index];
-
-					if(stillMatchingNodes.indexOf(node) === -1) {
-						matchingNodes.splice(index, 1);
-
-						if(typeof(this.unmatches) === 'function') this.unmatches(node);
-
-						index = index - 1;
-					}
+				try{
+					rule.cleanup();
+				}catch(exception){
+					setTimeout(function() {
+						throw exception;
+					}, 0);
 				}
 			}
-		},
-		collectRelevantNodes: {
-			configurable: false,
-			enumerable: true,
-			writable: false,
-			value: function collectRelevantNodes(rootNodes) {
-				var relevantNodes = [];
 
-				rootNodes.forEach(function(node) {
-					if(node instanceof Element) {
-						if(node.matches(this.selector)) {
-							relevantNodes.push(node);
-						}
+			Decl.isWatching = false;
+		}
 
-						append(relevantNodes, node.querySelectorAll(this.selector));
-					}
-				}.bind(this));
+		return this;
+	};
 
-				return relevantNodes;
-			}
-		},
-		isActive: {
-			configurable: false,
-			enumerable: true,
-			get: function getIsRuleActive() {
-				return Decl.isWatching && rules.indexOf(this) >= 0;
-			},
-			set: function setIsRuleActive() {
-				throw new Error('Use Decl.addRule or Decl.removeRule instead');
+	Decl.addRule = function(rule) {
+		if(mutationObserver) {
+			try{
+				rule.initialize();
+			}catch(exception){
+				setTimeout(function() {
+					throw exception;
+				}, 0);
 			}
 		}
-	});
+
+		activeRules.push(rule);
+
+		return this;
+	};
+
+	Decl.removeRule = function(rule) {
+		var index = activeRules.indexOf(rule);
+
+		if(index >= 0) {
+			activeRules.splice(index, 1);
+
+			try{
+				rule.cleanup();
+			}catch(exception){
+				setTimeout(function() {
+					throw exception;
+				}, 0);
+			}
+		}
+
+		return this;
+	};
+
+	Decl.createRule = function(selector, options) {
+		var rule = new Rule(); // eww
+
+		rule.selector = selector;
+		rule.onMatch = options.matches;
+		rule.onUnmatch = options.unmatches;
+		
+		return rule;
+	};
+
+	Decl.Rule = Rule;
 
 	return Decl;
 }));
