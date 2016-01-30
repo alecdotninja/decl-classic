@@ -1,251 +1,253 @@
 (function(global, factory) {
-	if (typeof module === "object" && typeof module.exports === "object") {
-		module.exports = global.document ? 
-							factory(global) : 
-							function(global) { 
-								return factory(global); 
-							};
-	}else{
-		global.Decl = factory(global);
-	}
+  if (typeof module === "object" && typeof module.exports === "object") {
+    module.exports = global.document ?
+      factory(global) :
+      function(global) {
+        return factory(global);
+      };
+  }else{
+    global.Decl = factory(global);
+  }
 }(typeof window !== "undefined" ? window : this, function createDecl(global) {
-	'use strict';
+  'use strict';
 
-	var rootElement = global.document.documentElement;
-	var MutationObserver = global.MutationObserver;
+  var rootElement = global.document.documentElement;
+  var MutationObserver = global.MutationObserver;
 
-	var Rule = function Rule() {
-		if(!(this instanceof Rule)) return new Rule();
-	};
+  var Rule = function Rule() {
+    if(!(this instanceof Rule)) return new Rule();
+  };
 
-	var _indexOf = Array.prototype.indexOf;
+  var _indexOf = Array.prototype.indexOf;
 
-	Rule.prototype.sweep = function() {	
-		var matchingElements = rootElement.querySelectorAll(this.selector);
-		var matches = (this.matches = this.matches || []);
-		var index, length, element;
+  Rule.prototype.sweep = function() {
+    var matchingElements = rootElement.querySelectorAll(this.selector);
+    var matches = (this.matches = this.matches || []);
+    var index, length, element;
 
-		for(index = 0, length = matchingElements.length; index < length; index++) {
-			element = matchingElements[index];
+    for(index = 0, length = matchingElements.length; index < length; index++) {
+      element = matchingElements[index];
 
-			if(matches.indexOf(element) === -1) {
-				matches.push(element);
+      if(matches.indexOf(element) === -1) {
+        matches.push(element);
 
-				try {
-					if(this.onMatch) (element);
-				}catch(exception){
-					setTimeout(function() {
-						throw exception;
-					}, 0);
-				}
-			}
-		}
+        try {
+          if(this.onMatch) this.onMatch(element);
+        }catch(exception){
+          setTimeout(function() {
+            throw exception;
+          }, 0);
+        }
+      }
+    }
 
-		for(index = 0, length = matches.length; index < length; index++) {
-			element = matches[index];
+    for(index = 0, length = matches.length; index < length; index++) {
+      element = matches[index];
 
-			if(_indexOf.call(matchingElements, element) === -1) {
-				matches.splice(index--, 1);
-				length = matches.length;
+      if(_indexOf.call(matchingElements, element) === -1) {
+        matches.splice(index--, 1);
+        length = matches.length;
 
-				try {
-					if(this.onUnmatch) this.onUnmatch(element);
-				}catch(exception){
-					setTimeout(function() {
-						throw exception;
-					}, 0);
-				}
-			}
-		}
+        try {
+          if(this.onUnmatch) this.onUnmatch(element);
+        }catch(exception){
+          setTimeout(function() {
+            throw exception;
+          }, 0);
+        }
+      }
+    }
 
-		return this;
-	};
+    return this;
+  };
 
-	Rule.prototype.initialize = Rule.prototype.sweep;
+  Rule.prototype.initialize = Rule.prototype.sweep;
 
-	Rule.prototype.cleanup = function() {
-		var matches = (this.matches = this.matches || []);
-		var index, length, element;
+  Rule.prototype.cleanup = function() {
+    var matches = (this.matches = this.matches || []);
+    var index, length, element;
 
-		for(index = 0, length = matches.length; index < length; index++) {
-			element = matches[index];
-			
-			matches.splice(index--, 1);
+    for(index = 0, length = matches.length; index < length; index++) {
+      element = matches[index];
 
-			try {
-				if(this.onUnmatch) this.onUnmatch(element);
-			}catch(exception){
-				setTimeout(function() {
-					throw exception;
-				}, 0);
-			}
-		}
+      matches.splice(index--, 1);
 
-		return this;
-	};
+      try {
+        if(this.onUnmatch) this.onUnmatch(element);
+      }catch(exception){
+        setTimeout(function() {
+          throw exception;
+        }, 0);
+      }
+    }
 
-	var activeRules = [];
-	var stack = [];
+    return this;
+  };
 
-	var processActiveRules = function() {
-		for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-			rule = activeRules[index];
+  var activeRules = [];
+  var stack = [];
 
-			if(stack.indexOf(rule) === -1) {
-				stack.push(rule);
+  var processActiveRules = function() {
+    for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+      rule = activeRules[index];
 
-				try {
-					rule.sweep();
-				}catch(exception){
-					setTimeout(function() {
-						throw exception;
-					}, 0);
-				}
+      if(stack.indexOf(rule) === -1) {
+        stack.push(rule);
 
-				stack.pop();
-			}
-		}
-	};
+        try {
+          rule.sweep();
+        }catch(exception){
+          setTimeout(function() {
+            throw exception;
+          }, 0);
+        }
 
-	var animationFrameState = 0;
-	// 0 - outside
-	// 1 - waiting
-	// 2 - inside
+        stack.pop();
+      }
+    }
+  };
 
-	var handleMutation = function() {
-		if(animationFrameState === 0) {
-			requestAnimationFrame(function() {
-				animationFrameState = 2;
+  var animationFrameState = 0;
+  // 0 - outside
+  // 1 - waiting
+  // 2 - inside
 
-				try {
-					handleMutation();
-				}finally{
-					animationFrameState = 0;
-				}
-			});
+  var handleMutation = function() {
+    if(animationFrameState === 0) {
+      requestAnimationFrame(function() {
+        animationFrameState = 2;
 
-			animationFrameState = 1;
-		}else if(animationFrameState === 1) {
-			// nothing
-		}else if(animationFrameState === 2){
-			processActiveRules();
-		}else{
-			animationFrameState = 0;
-		}
-	};
+        try {
+          handleMutation();
+        }finally{
+          animationFrameState = 0;
+        }
+      });
+
+      animationFrameState = 1;
+    }else if(animationFrameState === 1) {
+      // nothing
+    }else if(animationFrameState === 2){
+      processActiveRules();
+    }else{
+      animationFrameState = 0;
+    }
+  };
 
 
-	var mutationObserver = null;
+  var mutationObserver = null;
 
-	var Decl = function Decl(selector, options) {
-		var rule = Decl.createRule(selector, options);
+  var Decl = function Decl(selector, options) {
+    var rule = Decl.createRule(selector, options);
 
-		if(!mutationObserver) {
-			Decl.startWatching();
-		}
+    if(!mutationObserver) {
+      Decl.startWatching();
+    }
 
-		Decl.addRule(rule);
+    Decl.addRule(rule);
 
-		return rule;
-	};
+    return rule;
+  };
 
-	Decl.isWatching = false;
-	
-	Decl.startWatching = function() {
-		if(!mutationObserver) {
-			for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-				rule = activeRules[index];
+  Decl.isWatching = false;
 
-				try{
-					rule.initialize();
-				}catch(exception){
-					setTimeout(function() {
-						throw exception;
-					}, 0);
-				}
-			}
+  Decl.startWatching = function() {
+    if(!mutationObserver) {
+      for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+        rule = activeRules[index];
 
-			mutationObserver = new MutationObserver(handleMutation);
+        try{
+          rule.initialize();
+        }catch(exception){
+          setTimeout(function() {
+            throw exception;
+          }, 0);
+        }
+      }
 
-			mutationObserver.observe(rootElement, {
-				attributes: true,
-				characterData: true,
-				childList: true,
-				subtree: true
-			});
+      mutationObserver = new MutationObserver(handleMutation);
 
-			Decl.isWatching = true;
-		}
+      mutationObserver.observe(rootElement, {
+        attributes: true,
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
 
-		return this;
-	};
+      Decl.isWatching = true;
+    }
 
-	Decl.stopWatching = function() {
-		if(mutationObserver) {
-			mutationObserver.disconnect();
-			mutationObserver = null;
+    return this;
+  };
 
-			for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-				rule = activeRules[index];
+  Decl.stopWatching = function() {
+    if(mutationObserver) {
+      mutationObserver.disconnect();
+      mutationObserver = null;
 
-				try{
-					rule.cleanup();
-				}catch(exception){
-					setTimeout(function() {
-						throw exception;
-					}, 0);
-				}
-			}
+      for(var index = 0, length = activeRules.length, rule; index < length; index++) {
+        rule = activeRules[index];
 
-			Decl.isWatching = false;
-		}
+        try{
+          rule.cleanup();
+        }catch(exception){
+          setTimeout(function() {
+            throw exception;
+          }, 0);
+        }
+      }
 
-		return this;
-	};
+      Decl.isWatching = false;
+    }
 
-	Decl.addRule = function(rule) {
-		if(mutationObserver) {
-			try{
-				rule.initialize();
-			}catch(exception){
-				setTimeout(function() {
-					throw exception;
-				}, 0);
-			}
-		}
+    return this;
+  };
 
-		activeRules.push(rule);
+  Decl.addRule = function(rule) {
+    if(mutationObserver) {
+      try{
+        rule.initialize();
+      }catch(exception){
+        setTimeout(function() {
+          throw exception;
+        }, 0);
+      }
+    }
 
-		return this;
-	};
+    activeRules.push(rule);
 
-	Decl.removeRule = function(rule) {
-		var index = activeRules.indexOf(rule);
+    return this;
+  };
 
-		if(index >= 0) {
-			activeRules.splice(index, 1);
+  Decl.removeRule = function(rule) {
+    var index = activeRules.indexOf(rule);
 
-			try{
-				rule.cleanup();
-			}catch(exception){
-				setTimeout(function() {
-					throw exception;
-				}, 0);
-			}
-		}
+    if(index >= 0) {
+      activeRules.splice(index, 1);
 
-		return this;
-	};
+      try{
+        rule.cleanup();
+      }catch(exception){
+        setTimeout(function() {
+          throw exception;
+        }, 0);
+      }
+    }
 
-	Decl.createRule = function(selector, options) {
-		var rule = new Rule(); // eww
+    return this;
+  };
 
-		rule.selector = selector;
-		rule.onMatch = options.matches;
-		rule.onUnmatch = options.unmatches;
-		
-		return rule;
-	};
-	
-	return Decl;
+  Decl.createRule = function(selector, options) {
+    var rule = new Rule(); // eww
+
+    rule.selector = selector;
+    rule.onMatch = options.matches;
+    rule.onUnmatch = options.unmatches;
+
+    return rule;
+  };
+
+  Decl.activeRules = activeRules;
+
+  return Decl;
 }));
