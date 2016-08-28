@@ -8,18 +8,24 @@ var Decl = (function() {
 
 	var ROOT_NODE = document.documentElement;
 
+	var MutationObserver = window.MutationObserver || window.webkitMutationObserver || null;
+	var requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || null;
+
 	var rules = [];
 	var isWatching = false;
 
 	var isCurrentTreeTainted = false;
 	var mutationObserver = null;
-	var MutationObserver = window.MutationObserver || window.webkitMutationObserver || null;
 
 	function sechduleRuleSynchronization() {
 		if(!isCurrentTreeTainted) {
 			isCurrentTreeTainted = true;
 
-			requestAnimationFrame(synchronizeRules);
+			if(requestAnimationFrame) {
+				requestAnimationFrame(synchronizeRules);
+			}else{
+				setTimeout(synchronizeRules, 16)
+			}
 		}
 	}
 
