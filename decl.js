@@ -1,19 +1,19 @@
 var Decl = (function() {
-  "use strict";
-  
+	"use strict";
+
 	var MATCHER_TYPE_ERROR = "Decl: A rule's `matcher` must be a CSS selector (string) or a function which takes a node under consideration and returns a CSS selector (string) that matches all matching nodes in the subtree, an array-like object of matching nodes in the subtree, or a boolean value as to whether the node should be included (in this case, the function will be invoked again for all children of the node).";
 	var MATCHES_TYPE_ERROR = "Decl: A rule's `matches` callback must be a function.";
 	var UNMATCHES_TYPE_ERROR = "Decl: A rule's `unmatches` callback must be a function.";
 	var RULE_TYPE_ERROR = "Decl: Expected an instance of `Decl.Rule`. Use `Decl.createRule` or `new Decl.Rule` to create one.";
 
 	var ROOT_NODE = document.documentElement;
-	var MUTATION_OBSERVATION_DESCRIPTOR = { childList: true, attributes: true, subtree: true };
 
 	var rules = [];
 	var isWatching = false;
 
 	var isCurrentTreeTainted = false;
-	var mutationObserver = new MutationObserver(sechduleRuleSynchronization);
+	var mutationObserver = null;
+	var MutationObserver = window.MutationObserver || window.webkitMutationObserver || null;
 
 	function sechduleRuleSynchronization() {
 		if(!isCurrentTreeTainted) {
@@ -24,8 +24,11 @@ var Decl = (function() {
 	}
 
 	function synchronizeRules() {
-		mutationObserver.takeRecords();
 		isCurrentTreeTainted = false;
+
+		if(mutationObserver) {
+			mutationObserver.takeRecords();
+		}
 
 		for(var index = 0, length = rules.length, rule; index < length; index++) {
 			rule = rules[index];
@@ -180,7 +183,9 @@ var Decl = (function() {
 			if(index === -1) {
 				rules.push(rule);
 
-				sechduleRuleSynchronization();
+				if(isWatching) {
+					sechduleRuleSynchronization();
+				}
 			}
 
 			return rule;
@@ -207,7 +212,15 @@ var Decl = (function() {
 
 	function startWatching() {
 		if(!isWatching) {
-			mutationObserver.observe(ROOT_NODE, MUTATION_OBSERVATION_DESCRIPTOR);
+			if(MutationObserver) {
+				mutationObserver = new MutationObserver(sechduleRuleSynchronization);
+				mutationObserver.observe(ROOT_NODE, { childList: true, attributes: true, subtree: true });
+			}else{
+				ROOT_NODE.addEventListener('DOMAttrModified', sechduleRuleSynchronization, true);
+				ROOT_NODE.addEventListener('DOMNodeInserted', sechduleRuleSynchronization, true);
+				ROOT_NODE.addEventListener('DOMNodeRemoved', sechduleRuleSynchronization, true);
+			}
+			
 			isWatching = true;
 
 			return true;
@@ -218,7 +231,15 @@ var Decl = (function() {
 
 	function stopWatching() {
 		if(isWatching) {
-			mutationObserver.disconnect();
+			if(MutationObserver) {
+				mutationObserver.disconnect();
+				mutationObserver = null;
+			}else{
+				ROOT_NODE.removeEventListener('DOMAttrModified', sechduleRuleSynchronization, true);
+				ROOT_NODE.removeEventListener('DOMNodeInserted', sechduleRuleSynchronization, true);
+				ROOT_NODE.removeEventListener('DOMNodeRemoved', sechduleRuleSynchronization, true);
+			}
+			
 			isWatching = false;
 
 			return true;
