@@ -4,8 +4,9 @@ Decl is a simple library designed to enable more declarative and unobtrusive Jav
 ## Usage
 
 ```javascript
-// Automatically adds select2 to all <select data-select2 />
-Decl('select[data-select2]', {
+// Automatically adds select2 to all <select data-uses-select2 />
+Decl({
+  matcher: 'select[data-uses-select2]',
   matches: function(node) {
     $(node).select2();
   },
