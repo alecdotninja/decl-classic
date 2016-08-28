@@ -1,253 +1,270 @@
-(function(global, factory) {
-  if (typeof module === "object" && typeof module.exports === "object") {
-    module.exports = global.document ?
-      factory(global) :
-      function(global) {
-        return factory(global);
-      };
-  }else{
-    global.Decl = factory(global);
-  }
-}(typeof window !== "undefined" ? window : this, function createDecl(global) {
-  'use strict';
+var Decl = (function() {
+  "use strict";
+  
+	var MATCHER_TYPE_ERROR = "Decl: A rule's `matcher` must be a CSS selector (string) or a function which takes a node under consideration and returns a CSS selector (string) that matches all matching nodes in the subtree, an array-like object of matching nodes in the subtree, or a boolean value as to whether the node should be included (in this case, the function will be invoked again for all children of the node).";
+	var MATCHES_TYPE_ERROR = "Decl: A rule's `matches` callback must be a function.";
+	var UNMATCHES_TYPE_ERROR = "Decl: A rule's `unmatches` callback must be a function.";
+	var RULE_TYPE_ERROR = "Decl: Expected an instance of `Decl.Rule`. Use `Decl.createRule` or `new Decl.Rule` to create one.";
 
-  var rootElement = global.document.documentElement;
-  var MutationObserver = global.MutationObserver;
+	var ROOT_NODE = document.documentElement;
+	var MUTATION_OBSERVATION_DESCRIPTOR = { childList: true, attributes: true, subtree: true };
 
-  var Rule = function Rule() {
-    if(!(this instanceof Rule)) return new Rule();
-  };
+	var rules = [];
+	var isWatching = false;
 
-  var _indexOf = Array.prototype.indexOf;
+	var isCurrentTreeTainted = false;
+	var mutationObserver = new MutationObserver(sechduleRuleSynchronization);
 
-  Rule.prototype.sweep = function() {
-    var matchingElements = rootElement.querySelectorAll(this.selector);
-    var matches = (this.matches = this.matches || []);
-    var index, length, element;
+	function sechduleRuleSynchronization() {
+		if(!isCurrentTreeTainted) {
+			isCurrentTreeTainted = true;
 
-    for(index = 0, length = matchingElements.length; index < length; index++) {
-      element = matchingElements[index];
+			requestAnimationFrame(synchronizeRules);
+		}
+	}
 
-      if(matches.indexOf(element) === -1) {
-        matches.push(element);
+	function synchronizeRules() {
+		mutationObserver.takeRecords();
+		isCurrentTreeTainted = false;
 
-        try {
-          if(this.onMatch) this.onMatch(element);
-        }catch(exception){
-          setTimeout(function() {
-            throw exception;
-          }, 0);
-        }
-      }
-    }
+		for(var index = 0, length = rules.length, rule; index < length; index++) {
+			rule = rules[index];
 
-    for(index = 0, length = matches.length; index < length; index++) {
-      element = matches[index];
+			synchronizeRule(rule);
+		}
+	}
 
-      if(_indexOf.call(matchingElements, element) === -1) {
-        matches.splice(index--, 1);
-        length = matches.length;
+	var _indexOf = Array.prototype.indexOf;
+	function arrayDifference(a, b) {
+		var difference = [];
 
-        try {
-          if(this.onUnmatch) this.onUnmatch(element);
-        }catch(exception){
-          setTimeout(function() {
-            throw exception;
-          }, 0);
-        }
-      }
-    }
+		for(var index = 0, length = a.length, element; index < length; index++) {
+			element = a[index];
 
-    return this;
-  };
+			if(_indexOf.call(b, element) === -1) {
+				difference.push(element);
+			}
+		}		
 
-  Rule.prototype.initialize = Rule.prototype.sweep;
+		return difference;
+	}
 
-  Rule.prototype.cleanup = function() {
-    var matches = (this.matches = this.matches || []);
-    var index, length, element;
+	function callbackForEach(nodes, callback) {
+		for(var index = 0, length = nodes.length, node; index < length; index++) {
+			node = nodes[index];
 
-    for(index = 0, length = matches.length; index < length; index++) {
-      element = matches[index];
+			try {
+				callback(node);
+			}catch(exception){
+				console.error(exception);
+			}
+		}
+	}
 
-      matches.splice(index--, 1);
+	function synchronizeRule(rule) {
+		var previouslyMatchingNodes = rule._matchingNodes;
+		var currentlyMatchingNodes = findAllMatchingNodes(ROOT_NODE, rule.matcher);
+		
+		rule._matchingNodes = currentlyMatchingNodes;
 
-      try {
-        if(this.onUnmatch) this.onUnmatch(element);
-      }catch(exception){
-        setTimeout(function() {
-          throw exception;
-        }, 0);
-      }
-    }
+		var addedNodes = arrayDifference(currentlyMatchingNodes, previouslyMatchingNodes);
+		var removedNodes = arrayDifference(previouslyMatchingNodes, currentlyMatchingNodes);
 
-    return this;
-  };
+		callbackForEach(addedNodes, rule.matches);
+		callbackForEach(removedNodes, rule.unmatches);
+	}
 
-  var activeRules = [];
-  var stack = [];
+	function shutdownRule(rule) {
+		if(rule._matchingNodes) {
+			var nodes = rule._matchingNodes;
+			rule._matchingNodes = [];
 
-  var processActiveRules = function() {
-    for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-      rule = activeRules[index];
+			callbackForEach(nodes, rule.unmatches);
+		}
+	}
 
-      if(stack.indexOf(rule) === -1) {
-        stack.push(rule);
+	function findAllMatchingNodes(node, matcherOrMatchValue, __matchingNodes) {
+		var matcher;
+		var matchValue;
 
-        try {
-          rule.sweep();
-        }catch(exception){
-          setTimeout(function() {
-            throw exception;
-          }, 0);
-        }
+		if(typeof(matcherOrMatchValue) === 'function') {
+			matcher = matcherOrMatchValue;
+			matchValue = matcher(node);
+		}else{
+			matchValue = matcherOrMatchValue;
+			matcher = function() {
+				return matchValue;
+			};
+		}
 
-        stack.pop();
-      }
-    }
-  };
+		switch( typeof(matchValue) ) {
+			case 'string':
+				if(typeof(jQuery) === 'function') {
+					return jQuery(matchValue, node);
+				}else{
+					return node.querySelectorAll(matchValue);
+				}
 
-  var animationFrameState = 0;
-  // 0 - outside
-  // 1 - waiting
-  // 2 - inside
+			case 'boolean':
+				__matchingNodes = __matchingNodes || [];
 
-  var handleMutation = function() {
-    if(animationFrameState === 0) {
-      requestAnimationFrame(function() {
-        animationFrameState = 2;
+				if(matchValue) {
+					__matchingNodes.push(node);
+				}
 
-        try {
-          handleMutation();
-        }finally{
-          animationFrameState = 0;
-        }
-      });
+				var childNodes = node.childNodes;
 
-      animationFrameState = 1;
-    }else if(animationFrameState === 1) {
-      // nothing
-    }else if(animationFrameState === 2){
-      processActiveRules();
-    }else{
-      animationFrameState = 0;
-    }
-  };
+				for(var index = 0, length = childNodes.length, childNode; index < length; index++) {
+					childNode = childNodes[index];
+					
+					findAllMatchingNodes(childNode, matcher, __matchingNodes);
+				}
 
+				return __matchingNodes;
 
-  var mutationObserver = null;
+			case 'undefined':
+				return [];
 
-  var Decl = function Decl(selector, options) {
-    var rule = Decl.createRule(selector, options);
+			case 'object':
+				if(matchValue === null) {
+					return [];
+				}else if(typeof(matchValue.length) === 'number') {
+					return matchValue;
+				}else{
+					throw new TypeError(MATCHER_TYPE_ERROR);
+				}
 
-    if(!mutationObserver) {
-      Decl.startWatching();
-    }
+			default:
+				throw new TypeError(MATCHER_TYPE_ERROR);
+		}
+	};
 
-    Decl.addRule(rule);
+	function Rule(options) {
+		if(!(this instanceof Rule)) {
+			return new Rule(options);
+		}
 
-    return rule;
-  };
+		if(typeof(options.matcher) === 'string' || typeof(options.matcher) === 'function') {
+			this.matcher = options.matcher;
+		}else{
+			throw new TypeError(MATCHER_TYPE_ERROR);
+		}
 
-  Decl.isWatching = false;
+		if(options.matches) {
+			if(typeof(options.matches) === 'function') {
+				this.matches = options.matches;
+			}else{
+				throw new TypeError(MATCHES_TYPE_ERROR);
+			}
+		}
 
-  Decl.startWatching = function() {
-    if(!mutationObserver) {
-      for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-        rule = activeRules[index];
+		if(options.unmatches) {
+			if(typeof(options.unmatches) === 'function') {
+				this.unmatches = options.unmatches;
+			}else{
+				throw new TypeError(UNMATCHES_TYPE_ERROR);
+			}
+		}
 
-        try{
-          rule.initialize();
-        }catch(exception){
-          setTimeout(function() {
-            throw exception;
-          }, 0);
-        }
-      }
+		this._matchingNodes = [];
+	}
 
-      mutationObserver = new MutationObserver(handleMutation);
+	function createRule(ruleOptions) {
+		return Rule(ruleOptions);
+	}
 
-      mutationObserver.observe(rootElement, {
-        attributes: true,
-        characterData: true,
-        childList: true,
-        subtree: true
-      });
+	function addRule(rule) {
+		if(rule instanceof Rule) {
+			var index = rules.indexOf(rule);
 
-      Decl.isWatching = true;
-    }
+			if(index === -1) {
+				rules.push(rule);
 
-    return this;
-  };
+				sechduleRuleSynchronization();
+			}
 
-  Decl.stopWatching = function() {
-    if(mutationObserver) {
-      mutationObserver.disconnect();
-      mutationObserver = null;
+			return rule;
+		}else{
+			throw new TypeError(RULE_TYPE_ERROR);
+		}
+	}
 
-      for(var index = 0, length = activeRules.length, rule; index < length; index++) {
-        rule = activeRules[index];
+	function removeRule(rule) {
+		if(rule instanceof Rule) {
+			var index = rules.indexOf(rule);
 
-        try{
-          rule.cleanup();
-        }catch(exception){
-          setTimeout(function() {
-            throw exception;
-          }, 0);
-        }
-      }
+			if(index !== -1) {
+				rules.splice(index, 1);
 
-      Decl.isWatching = false;
-    }
+				shutdownRule(rule);
+			}
 
-    return this;
-  };
+			return rule;
+		}else{
+			throw new TypeError(RULE_TYPE_ERROR);
+		}
+	}
 
-  Decl.addRule = function(rule) {
-    if(mutationObserver) {
-      try{
-        rule.initialize();
-      }catch(exception){
-        setTimeout(function() {
-          throw exception;
-        }, 0);
-      }
-    }
+	function startWatching() {
+		if(!isWatching) {
+			mutationObserver.observe(ROOT_NODE, MUTATION_OBSERVATION_DESCRIPTOR);
+			isWatching = true;
 
-    activeRules.push(rule);
+			return true;
+		}else{
+			return false;
+		}
+	}
 
-    return this;
-  };
+	function stopWatching() {
+		if(isWatching) {
+			mutationObserver.disconnect();
+			isWatching = false;
 
-  Decl.removeRule = function(rule) {
-    var index = activeRules.indexOf(rule);
+			return true;
+		}else{
+			return false;
+		}
+	}
 
-    if(index >= 0) {
-      activeRules.splice(index, 1);
+	function shutdown() {
+		var rule;
 
-      try{
-        rule.cleanup();
-      }catch(exception){
-        setTimeout(function() {
-          throw exception;
-        }, 0);
-      }
-    }
+		while(rule = rules[0]) {
+			removeRule(rule);
+		}
 
-    return this;
-  };
+		stopWatching();
+	}
 
-  Decl.createRule = function(selector, options) {
-    var rule = new Rule(); // eww
+	function Decl(ruleOptions) {
+		var rule = createRule(ruleOptions);
 
-    rule.selector = selector;
-    rule.onMatch = options.matches;
-    rule.onUnmatch = options.unmatches;
+		addRule(rule);
+		startWatching();
 
-    return rule;
-  };
+		return rule;
+	}
 
-  Decl.activeRules = activeRules;
+	var _slice = Array.prototype.slice;
+	Object.defineProperties(Rule.prototype, {
+		matchingNodes: { get: function() { return _slice.call(this._matchingNodes, 0); }, enumerable: true }
+	});
 
-  return Decl;
-}));
+	Object.defineProperties(Decl, {
+		Rule: { value: Rule, enumerable: true },
+		createRule: { value: createRule, enumerable: true },
+
+		rules: { get: function() { return rules.slice(0); }, enumerable: true },
+		addRule: { value: addRule, enumerable: true },
+		removeRule: { value: removeRule, enumerable: true },
+
+		startWatching: { value: startWatching, enumerable: true },
+		stopWatching: { value: stopWatching, enumerable: true },
+		isWatching: { get: function() { return isWatching; }, enumerable: true },
+
+		shutdown: { value: shutdown, enumerable: true }
+	});
+
+	return Decl;
+})();
