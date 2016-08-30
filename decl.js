@@ -1,297 +1,375 @@
-var Decl = (function() {
-	"use strict";
+var Decl = (function () {
+  "use strict";
 
-	var MATCHER_TYPE_ERROR = "Decl: A rule's `matcher` must be a CSS selector (string) or a function which takes a node under consideration and returns a CSS selector (string) that matches all matching nodes in the subtree, an array-like object of matching nodes in the subtree, or a boolean value as to whether the node should be included (in this case, the function will be invoked again for all children of the node).";
-	var MATCHES_TYPE_ERROR = "Decl: A rule's `matches` callback must be a function.";
-	var UNMATCHES_TYPE_ERROR = "Decl: A rule's `unmatches` callback must be a function.";
-	var RULE_TYPE_ERROR = "Decl: Expected an instance of `Decl.Rule`. Use `Decl.createRule` or `new Decl.Rule` to create one.";
+  var MATCHER_TYPE_ERROR = "Decl: A rule's `matcher` must be a CSS selector (string) or a function which takes a node under consideration and returns a CSS selector (string) that matches all matching nodes in the subtree, an array-like object of matching nodes in the subtree, or a boolean value as to whether the node should be included (in this case, the function will be invoked again for all children of the node).";
+  var MATCHES_TYPE_ERROR = "Decl: A rule's `matches` callback must be a function.";
+  var UNMATCHES_TYPE_ERROR = "Decl: A rule's `unmatches` callback must be a function.";
+  var RULE_TYPE_ERROR = "Decl: Expected an instance of `Decl.Rule`. Use `Decl.createRule` or `new Decl.Rule` to create one.";
 
-	var ROOT_NODE = document.documentElement;
+  var ROOT_NODE = document.documentElement;
 
-	var MutationObserver = window.MutationObserver || window.webkitMutationObserver || null;
-	var requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || null;
+  var MutationObserver = window.MutationObserver || window.webkitMutationObserver || null;
+  var requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || null;
 
-	var rules = [];
-	var isWatching = false;
+  var debug = false;
 
-	var isCurrentTreeTainted = false;
-	var mutationObserver = null;
+  var rules = [];
+  var isWatching = false;
 
-	function sechduleRuleSynchronization() {
-		if(!isCurrentTreeTainted) {
-			isCurrentTreeTainted = true;
+  var isSynchronizingRules = false;
+  var isCurrentTreeTainted = false;
+  var mutationObserver = null;
 
-			if(requestAnimationFrame) {
-				requestAnimationFrame(synchronizeRules);
-			}else{
-				setTimeout(synchronizeRules, 16)
-			}
-		}
-	}
+  function scheduleRuleSynchronization() {
+    if (!isCurrentTreeTainted) {
+      isCurrentTreeTainted = true;
 
-	function synchronizeRules() {
-		isCurrentTreeTainted = false;
+      if (isSynchronizingRules) {
+        if (debug) {
+          console.log('Decl: Tree tainted, but synchronization is already in progress. Ignoring.', arguments);
+        }
+      }else{
+        if (debug) {
+          console.log('Decl: Tree tainted. Rules will be synchronized before the next render.', arguments);
+        }
 
-		if(mutationObserver) {
-			mutationObserver.takeRecords();
-		}
+        if (requestAnimationFrame) {
+          requestAnimationFrame(synchronizeRules);
+        } else {
+          setTimeout(synchronizeRules, 16); // 16ms ~> 60 fps
+        }
+      }
+    }else{
+      if (debug) {
+        console.log('Decl: Tree tainted, but synchronization is already scheduled. Ignoring.', arguments);
+      }
+    }
+  }
 
-		for(var index = 0, length = rules.length, rule; index < length; index++) {
-			rule = rules[index];
+  function synchronizeRules() {
+    isSynchronizingRules = true;
 
-			synchronizeRule(rule);
-		}
-	}
+    try {
+      if (debug) {
+        console.log('Decl: Starting rule synchronization.');
+      }
 
-	var _indexOf = Array.prototype.indexOf;
-	function arrayDifference(a, b) {
-		var difference = [];
+      while(isCurrentTreeTainted) {
+        isCurrentTreeTainted = false;
 
-		for(var index = 0, length = a.length, element; index < length; index++) {
-			element = a[index];
+        for (var index = 0, length = rules.length, rule; index < length; index++) {
+          rule = rules[index];
 
-			if(_indexOf.call(b, element) === -1) {
-				difference.push(element);
-			}
-		}		
+          synchronizeRule(rule);
+        }
+      }
+    } finally {
+      isSynchronizingRules = false;
+    }
 
-		return difference;
-	}
+    if (debug) {
+      console.log('Decl: Done with rule synchronization. Tree is pristine.');
+    }
+  }
 
-	function callbackForEach(nodes, callback) {
-		for(var index = 0, length = nodes.length, node; index < length; index++) {
-			node = nodes[index];
+  var _indexOf = Array.prototype.indexOf;
 
-			try {
-				callback(node);
-			}catch(exception){
-				console.error(exception);
-			}
-		}
-	}
+  function arrayDifference(a, b) {
+    var difference = [];
 
-	function synchronizeRule(rule) {
-		var previouslyMatchingNodes = rule._matchingNodes;
-		var currentlyMatchingNodes = findAllMatchingNodes(ROOT_NODE, rule.matcher);
-		
-		rule._matchingNodes = currentlyMatchingNodes;
+    for (var index = 0, length = a.length, element; index < length; index++) {
+      element = a[index];
 
-		var addedNodes = arrayDifference(currentlyMatchingNodes, previouslyMatchingNodes);
-		var removedNodes = arrayDifference(previouslyMatchingNodes, currentlyMatchingNodes);
+      if (_indexOf.call(b, element) === -1) {
+        difference.push(element);
+      }
+    }
 
-		callbackForEach(addedNodes, rule.matches);
-		callbackForEach(removedNodes, rule.unmatches);
-	}
+    return difference;
+  }
 
-	function shutdownRule(rule) {
-		if(rule._matchingNodes) {
-			var nodes = rule._matchingNodes;
-			rule._matchingNodes = [];
+  function callbackForEach(rule, propertyName, nodes) {
+    var callback = rule[propertyName];
 
-			callbackForEach(nodes, rule.unmatches);
-		}
-	}
+    for (var index = 0, length = nodes.length, node; index < length; index++) {
+      node = nodes[index];
 
-	function findAllMatchingNodes(node, matcherOrMatchValue, __matchingNodes) {
-		var matcher;
-		var matchValue;
+      try {
+        if (typeof(callback) === 'function') {
+          if (debug) {
+            console.log('Decl: Node', node, propertyName, 'on rule', rule);
+          }
 
-		if(typeof(matcherOrMatchValue) === 'function') {
-			matcher = matcherOrMatchValue;
-			matchValue = matcher(node);
-		}else{
-			matchValue = matcherOrMatchValue;
-			matcher = function() {
-				return matchValue;
-			};
-		}
+          callback.call(rule, node);
+        }
+      } catch (exception) {
+        if (debug) {
+          console.error('Decl: Uncaught exception (', exception, ') in callback', callback, 'on rule', rule, 'for node', node);
+        }
+      }
+    }
+  }
 
-		switch( typeof(matchValue) ) {
-			case 'string':
-				if(typeof(jQuery) === 'function') {
-					return jQuery(matchValue, node);
-				}else{
-					return node.querySelectorAll(matchValue);
-				}
+  function synchronizeRule(rule) {
+    var previouslyMatchingNodes = rule.matchingNodes;
+    var currentlyMatchingNodes = findAllMatchingNodes(ROOT_NODE, rule.matcher);
 
-			case 'boolean':
-				__matchingNodes = __matchingNodes || [];
+    if (!previouslyMatchingNodes) {
+      previouslyMatchingNodes = [];
+    }
 
-				if(matchValue) {
-					__matchingNodes.push(node);
-				}
+    rule.matchingNodes = currentlyMatchingNodes;
 
-				var childNodes = node.childNodes;
+    var addedNodes = arrayDifference(currentlyMatchingNodes, previouslyMatchingNodes);
+    var removedNodes = arrayDifference(previouslyMatchingNodes, currentlyMatchingNodes);
 
-				for(var index = 0, length = childNodes.length, childNode; index < length; index++) {
-					childNode = childNodes[index];
-					
-					findAllMatchingNodes(childNode, matcher, __matchingNodes);
-				}
+    if (addedNodes.length > 0) {
+      callbackForEach(rule, 'matches', addedNodes);
+    }
 
-				return __matchingNodes;
+    if (removedNodes.length > 0) {
+      callbackForEach(rule, 'unmatches', removedNodes);
+    }
+  }
 
-			case 'undefined':
-				return [];
+  function shutdownRule(rule) {
+    if (rule.matchingNodes) {
+      var nodes = rule.matchingNodes;
+      rule.matchingNodes = [];
 
-			case 'object':
-				if(matchValue === null) {
-					return [];
-				}else if(typeof(matchValue.length) === 'number') {
-					return matchValue;
-				}else{
-					throw new TypeError(MATCHER_TYPE_ERROR);
-				}
+      callbackForEach(rule, 'unmatches', nodes);
+    }
+  }
 
-			default:
-				throw new TypeError(MATCHER_TYPE_ERROR);
-		}
-	};
+  function findAllMatchingNodes(node, matcherOrMatchValue, __matchingNodes) {
+    var matcher;
+    var matchValue;
 
-	function Rule(options) {
-		if(!(this instanceof Rule)) {
-			return new Rule(options);
-		}
+    if (typeof(matcherOrMatchValue) === 'function') {
+      matcher = matcherOrMatchValue;
+      matchValue = matcher(node);
+    } else {
+      matchValue = matcherOrMatchValue;
+      matcher = function () {
+        return matchValue;
+      };
+    }
 
-		if(typeof(options.matcher) === 'string' || typeof(options.matcher) === 'function') {
-			this.matcher = options.matcher;
-		}else{
-			throw new TypeError(MATCHER_TYPE_ERROR);
-		}
+    switch (typeof(matchValue)) {
+      case 'string':
+        if (typeof(jQuery) === 'function') {
+          // jQuery will mutate a node without an id in order to facilitate faster searching.
+          // This can be avoided when searching the entire document by explicitly NOT passing a context.
+          if(node === ROOT_NODE) {
+            return jQuery(matchValue);
+          }else{
+            return jQuery(matchValue, node);
+          }
+        } else {
+          return node.querySelectorAll(matchValue);
+        }
 
-		if(options.matches) {
-			if(typeof(options.matches) === 'function') {
-				this.matches = options.matches;
-			}else{
-				throw new TypeError(MATCHES_TYPE_ERROR);
-			}
-		}
+      case 'boolean':
+        __matchingNodes = __matchingNodes || [];
 
-		if(options.unmatches) {
-			if(typeof(options.unmatches) === 'function') {
-				this.unmatches = options.unmatches;
-			}else{
-				throw new TypeError(UNMATCHES_TYPE_ERROR);
-			}
-		}
+        if (matchValue) {
+          __matchingNodes.push(node);
+        }
 
-		this._matchingNodes = [];
-	}
+        var childNodes = node.childNodes;
 
-	function createRule(ruleOptions) {
-		return Rule(ruleOptions);
-	}
+        for (var index = 0, length = childNodes.length, childNode; index < length; index++) {
+          childNode = childNodes[index];
 
-	function addRule(rule) {
-		if(rule instanceof Rule) {
-			var index = rules.indexOf(rule);
+          findAllMatchingNodes(childNode, matcher, __matchingNodes);
+        }
 
-			if(index === -1) {
-				rules.push(rule);
+        return __matchingNodes;
 
-				if(isWatching) {
-					sechduleRuleSynchronization();
-				}
-			}
+      case 'undefined':
+        return [];
 
-			return rule;
-		}else{
-			throw new TypeError(RULE_TYPE_ERROR);
-		}
-	}
+      case 'object':
+        if (matchValue === null) {
+          return [];
+        } else if (typeof(matchValue.length) === 'number') {
+          return matchValue;
+        } else {
+          throw new TypeError(MATCHER_TYPE_ERROR);
+        }
 
-	function removeRule(rule) {
-		if(rule instanceof Rule) {
-			var index = rules.indexOf(rule);
+      default:
+        throw new TypeError(MATCHER_TYPE_ERROR);
+    }
+  }
 
-			if(index !== -1) {
-				rules.splice(index, 1);
+  function Rule(options) {
+    if (!(this instanceof Rule)) {
+      return new Rule(options);
+    }
 
-				shutdownRule(rule);
-			}
+    this.matchingNodes = [];
 
-			return rule;
-		}else{
-			throw new TypeError(RULE_TYPE_ERROR);
-		}
-	}
+    if (typeof(options.matcher) === 'string' || typeof(options.matcher) === 'function') {
+      this.matcher = options.matcher;
+    } else {
+      throw new TypeError(MATCHER_TYPE_ERROR);
+    }
 
-	function startWatching() {
-		if(!isWatching) {
-			if(MutationObserver) {
-				mutationObserver = new MutationObserver(sechduleRuleSynchronization);
-				mutationObserver.observe(ROOT_NODE, { childList: true, attributes: true, subtree: true });
-			}else{
-				ROOT_NODE.addEventListener('DOMAttrModified', sechduleRuleSynchronization, true);
-				ROOT_NODE.addEventListener('DOMNodeInserted', sechduleRuleSynchronization, true);
-				ROOT_NODE.addEventListener('DOMNodeRemoved', sechduleRuleSynchronization, true);
-			}
-			
-			isWatching = true;
+    if (options.matches) {
+      if (typeof(options.matches) === 'function') {
+        this.matches = options.matches;
+      } else {
+        throw new TypeError(MATCHES_TYPE_ERROR);
+      }
+    }
 
-			return true;
-		}else{
-			return false;
-		}
-	}
+    if (options.unmatches) {
+      if (typeof(options.unmatches) === 'function') {
+        this.unmatches = options.unmatches;
+      } else {
+        throw new TypeError(UNMATCHES_TYPE_ERROR);
+      }
+    }
+  }
 
-	function stopWatching() {
-		if(isWatching) {
-			if(MutationObserver) {
-				mutationObserver.disconnect();
-				mutationObserver = null;
-			}else{
-				ROOT_NODE.removeEventListener('DOMAttrModified', sechduleRuleSynchronization, true);
-				ROOT_NODE.removeEventListener('DOMNodeInserted', sechduleRuleSynchronization, true);
-				ROOT_NODE.removeEventListener('DOMNodeRemoved', sechduleRuleSynchronization, true);
-			}
-			
-			isWatching = false;
+  function createRule(ruleOptions) {
+    return Rule(ruleOptions);
+  }
 
-			return true;
-		}else{
-			return false;
-		}
-	}
+  function addRule(rule) {
+    if (rule instanceof Rule) {
+      var index = rules.indexOf(rule);
 
-	function shutdown() {
-		var rule;
+      if (index === -1) {
+        rules.push(rule);
 
-		while(rule = rules[0]) {
-			removeRule(rule);
-		}
+        if (debug) {
+          console.log('Decl: Added rule', rule);
+        }
 
-		stopWatching();
-	}
+        if (isWatching) {
+          scheduleRuleSynchronization();
+        }
+      }
 
-	function Decl(ruleOptions) {
-		var rule = createRule(ruleOptions);
+      return rule;
+    } else {
+      throw new TypeError(RULE_TYPE_ERROR);
+    }
+  }
 
-		addRule(rule);
-		startWatching();
+  function removeRule(rule) {
+    if (rule instanceof Rule) {
+      var index = rules.indexOf(rule);
 
-		return rule;
-	}
+      if (index !== -1) {
+        rules.splice(index, 1);
 
-	var _slice = Array.prototype.slice;
-	Object.defineProperties(Rule.prototype, {
-		matchingNodes: { get: function() { return _slice.call(this._matchingNodes, 0); }, enumerable: true }
-	});
+        if (debug) {
+          console.log('Decl: Removed rule', rule);
+        }
 
-	Object.defineProperties(Decl, {
-		Rule: { value: Rule, enumerable: true },
-		createRule: { value: createRule, enumerable: true },
+        shutdownRule(rule);
+      }
 
-		rules: { get: function() { return rules.slice(0); }, enumerable: true },
-		addRule: { value: addRule, enumerable: true },
-		removeRule: { value: removeRule, enumerable: true },
+      return rule;
+    } else {
+      throw new TypeError(RULE_TYPE_ERROR);
+    }
+  }
 
-		startWatching: { value: startWatching, enumerable: true },
-		stopWatching: { value: stopWatching, enumerable: true },
-		isWatching: { get: function() { return isWatching; }, enumerable: true },
+  function startWatching() {
+    if (!isWatching) {
+      if (MutationObserver) {
+        mutationObserver = new MutationObserver(scheduleRuleSynchronization);
+        mutationObserver.observe(ROOT_NODE, {childList: true, attributes: true, subtree: true});
 
-		shutdown: { value: shutdown, enumerable: true }
-	});
+        if (debug) {
+          console.log('Decl: Started watching', ROOT_NODE, 'via MutationObserver');
+        }
+      } else {
+        ROOT_NODE.addEventListener('DOMAttrModified', scheduleRuleSynchronization, true);
+        ROOT_NODE.addEventListener('DOMNodeInserted', scheduleRuleSynchronization, true);
+        ROOT_NODE.addEventListener('DOMNodeRemoved', scheduleRuleSynchronization, true);
 
-	return Decl;
+        if (debug) {
+          console.log('Decl: Started watching', ROOT_NODE, 'via mutation events (DOMAttrModified, DOMNodeInserted, and DOMNodeRemoved)');
+        }
+      }
+
+      isWatching = true;
+
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  function stopWatching() {
+    if (isWatching) {
+      if (MutationObserver) {
+        mutationObserver.disconnect();
+        mutationObserver = null;
+
+        if (debug) {
+          console.log('Decl: Stopped watching', ROOT_NODE, 'via MutationObserver');
+        }
+      } else {
+        ROOT_NODE.removeEventListener('DOMAttrModified', scheduleRuleSynchronization, true);
+        ROOT_NODE.removeEventListener('DOMNodeInserted', scheduleRuleSynchronization, true);
+        ROOT_NODE.removeEventListener('DOMNodeRemoved', scheduleRuleSynchronization, true);
+
+        if (debug) {
+          console.log('Decl: Stopped watching', ROOT_NODE, 'via mutation events (DOMAttrModified, DOMNodeInserted, and DOMNodeRemoved)');
+        }
+      }
+
+      isWatching = false;
+
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  function shutdown() {
+    var rule;
+
+    while (rule = rules[0]) {
+      removeRule(rule);
+    }
+
+    stopWatching();
+  }
+
+  function Decl(ruleOptions) {
+    var rule = createRule(ruleOptions);
+
+    addRule(rule);
+    startWatching();
+
+    return rule;
+  }
+
+  Object.defineProperties(Decl, {
+    debug: {get: function () { return debug; }, set: function(value) { return (debug = value); }, enumerable: true},
+
+    Rule: {value: Rule, enumerable: true},
+    createRule: {value: createRule, enumerable: true},
+
+    rules: {value: rules, enumerable: true},
+    addRule: {value: addRule, enumerable: true},
+    removeRule: {value: removeRule, enumerable: true},
+
+    startWatching: {value: startWatching, enumerable: true},
+    stopWatching: {value: stopWatching, enumerable: true},
+    isWatching: {get: function () { return isWatching; }, enumerable: true},
+
+    shutdown: {value: shutdown, enumerable: true},
+
+    prototype: {value: null, enumerable: false}
+  });
+
+  return Decl;
 })();
