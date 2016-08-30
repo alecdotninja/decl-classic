@@ -11,7 +11,11 @@ Decl({
     $(node).select2();
   },
   unmatches: function(node) {
-    $(node).select2('destroy');
+    var select2 = $(node).data('select2');
+    
+    if(select2) {
+      select2.destroy();
+    }
   }
 });
 ```
