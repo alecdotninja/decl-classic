@@ -94,12 +94,12 @@ var Decl = (function () {
     for (var index = 0, length = nodes.length, node; index < length; index++) {
       node = nodes[index];
 
+      if (debug) {
+        console.log('Decl: Node', node, propertyName, 'on rule', rule);
+      }
+      
       try {
         if (typeof(callback) === 'function') {
-          if (debug) {
-            console.log('Decl: Node', node, propertyName, 'on rule', rule);
-          }
-
           callback.call(rule, node);
         }
       } catch (exception) {
