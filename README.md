@@ -1,3 +1,6 @@
+**This is the classic version of Decl. The new version can be found [here](https://github.com/anarchocurious/decl).**
+
+
 # decl.js
 Decl is a simple library designed to enable more declarative and unobtrusive JavaScript.
 
